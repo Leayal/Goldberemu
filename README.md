@@ -1,8 +1,8 @@
 # Goldberg Steam Emulator
 
-This is a steam emulator that emulates steam online features on a LAN. It works on both Linux and Windows. For a readme on how to use it see: [The Release Readme](Readme_release.txt)
+This is a steam emulator that emulates steam online features on a LAN. It works on both Linux and Windows. For a readme on how to use it see: [The Release Readme](src/Readme_release.txt)
 
-You replace the steam api .dll or .so with mine (for complete steps see the [Release Readme](Readme_release.txt)) and then you can put steam in the trash and play your games either in single player on on LAN without steam (Assuming the games have no DRM and use Steam for online).
+You replace the steam api .dll or .so with mine (for complete steps see the [Release Readme](src/Readme_release.txt)) and then you can put steam in the trash and play your games either in single player on on LAN without steam (Assuming the games have no DRM and use Steam for online).
 
 If you are a game developper and made the mistake of depending too much on the steam api and want to release of version of your game without it and don't want to rewrite your game, this is for you. It is licenced LGPLv3+ so the only source code you need to publish is the source code of this emulator (and only if you make modification to it).
 
@@ -14,11 +14,11 @@ Put a steam_appid.txt file that contains the appid of the game right beside it i
 
 If your game has an original steam_api(64).dll or libsteam_api.so older than may 2016 (On windows: Properties->Digital Signatures->Timestamp) you might have to add a steam_interfaces.txt beside my emulator library if the game isn't working. There is a linux script to generate it in the scripts folder of this repo.
 
-For more information see: [The Release Readme](Readme_release.txt)
+For more information see: [The Release Readme](src/Readme_release.txt)
 
 ## Download Binaries
 
-You can download the latest binaries for Linux and Windows in the [release section](https://gitlab.com/Mr_Goldberg/goldberg_emulator/releases) of this repo.
+You can download the latest binaries for Linux and Windows in the [release section](https://github.com/Leayal/Goldberemu/releases/latest/) of this repo.
 
 ## Contributions
 
@@ -106,7 +106,7 @@ There is no difference in functionality between the normal windows version and t
 
 ##### What is the experimental version?
 
-Read this if you want to know what it is: [The Experimental Readme](Readme_experimental.txt)
+Read this if you want to know what it is: [The Experimental Readme](src/Readme_experimental.txt)
 
 ##### Is this illegal?
 
