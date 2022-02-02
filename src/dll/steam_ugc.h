@@ -36,6 +36,10 @@ public ISteamUGC007,
 public ISteamUGC008,
 public ISteamUGC009,
 public ISteamUGC010,
+public ISteamUGC012,
+public ISteamUGC013,
+public ISteamUGC014,
+public ISteamUGC015,
 public ISteamUGC
 {
     class Settings *settings;
@@ -179,10 +183,28 @@ bool GetQueryUGCResult( UGCQueryHandle_t handle, uint32 index, SteamUGCDetails_t
     return true;
 }
 
+uint32 GetQueryUGCNumTags( UGCQueryHandle_t handle, uint32 index )
+{
+    PRINT_DEBUG("Steam_UGC::GetQueryUGCNumTags\n");
+    return 0;
+}
+
+bool GetQueryUGCTag( UGCQueryHandle_t handle, uint32 index, uint32 indexTag, STEAM_OUT_STRING_COUNT( cchValueSize ) char* pchValue, uint32 cchValueSize )
+{
+    PRINT_DEBUG("Steam_UGC::GetQueryUGCTag\n");
+    return false;
+}
+
+bool GetQueryUGCTagDisplayName( UGCQueryHandle_t handle, uint32 index, uint32 indexTag, STEAM_OUT_STRING_COUNT( cchValueSize ) char* pchValue, uint32 cchValueSize )
+{
+    PRINT_DEBUG("Steam_UGC::GetQueryUGCTagDisplayName\n");
+    return false;
+}
 
 bool GetQueryUGCPreviewURL( UGCQueryHandle_t handle, uint32 index, STEAM_OUT_STRING_COUNT(cchURLSize) char *pchURL, uint32 cchURLSize )
 {
     PRINT_DEBUG("Steam_UGC::GetQueryUGCPreviewURL\n");
+    //TODO: escape simulator tries downloading this url and unsubscribes if it fails
     return false;
 }
 
@@ -245,6 +267,11 @@ bool GetQueryUGCKeyValueTag( UGCQueryHandle_t handle, uint32 index, uint32 keyVa
     return false;
 }
 
+bool GetQueryUGCKeyValueTag( UGCQueryHandle_t handle, uint32 index, const char *pchKey, STEAM_OUT_STRING_COUNT(cchValueSize) char *pchValue, uint32 cchValueSize )
+{
+    PRINT_DEBUG("Steam_UGC::GetQueryUGCKeyValueTag2\n");
+    return false;
+}
 
 
 // Release the request to free up memory, after retrieving results
@@ -268,6 +295,11 @@ bool AddRequiredTag( UGCQueryHandle_t handle, const char *pTagName )
     return true;
 }
 
+bool AddRequiredTagGroup( UGCQueryHandle_t handle, const SteamParamStringArray_t *pTagGroups )
+{
+    PRINT_DEBUG("Steam_UGC::AddRequiredTagGroup\n");
+    return true;
+}
 
 bool AddExcludedTag( UGCQueryHandle_t handle, const char *pTagName )
 {
@@ -382,6 +414,17 @@ bool AddRequiredKeyValueTag( UGCQueryHandle_t handle, const char *pKey, const ch
     return true;
 }
 
+bool SetTimeCreatedDateRange( UGCQueryHandle_t handle, RTime32 rtStart, RTime32 rtEnd )
+{
+    PRINT_DEBUG("Steam_UGC::SetTimeCreatedDateRange\n");
+    return true;
+}
+
+bool SetTimeUpdatedDateRange( UGCQueryHandle_t handle, RTime32 rtStart, RTime32 rtEnd )
+{
+    PRINT_DEBUG("Steam_UGC::SetTimeUpdatedDateRange\n");
+    return true;
+}
 
 // DEPRECATED - Use CreateQueryUGCDetailsRequest call above instead!
 SteamAPICall_t RequestUGCDetails( PublishedFileId_t nPublishedFileID, uint32 unMaxAgeSeconds )
@@ -486,6 +529,13 @@ bool SetAllowLegacyUpload( UGCUpdateHandle_t handle, bool bAllowLegacyUpload )
     PRINT_DEBUG("Steam_UGC::SetAllowLegacyUpload\n");
     return false;
 }
+
+bool RemoveAllItemKeyValueTags( UGCUpdateHandle_t handle )
+{
+    PRINT_DEBUG("Steam_UGC::RemoveAllItemKeyValueTags\n");
+    return false;
+}
+ // remove all existing key-value tags (you can add new ones via the AddItemKeyValueTag function)
 
 bool RemoveItemKeyValueTags( UGCUpdateHandle_t handle, const char *pchKey )
 {
@@ -652,7 +702,7 @@ uint32 GetSubscribedItems( PublishedFileId_t* pvecPublishedFileID, uint32 cMaxEn
 // get EItemState flags about item on this client
 uint32 GetItemState( PublishedFileId_t nPublishedFileID )
 {
-    PRINT_DEBUG("Steam_UGC::GetItemState\n");
+    PRINT_DEBUG("Steam_UGC::GetItemState %llu\n", nPublishedFileID);
     std::lock_guard<std::recursive_mutex> lock(global_mutex);
     if (subscribed.count(nPublishedFileID)) {
         if (settings->isModInstalled(nPublishedFileID)) {
@@ -693,10 +743,10 @@ bool GetItemDownloadInfo( PublishedFileId_t nPublishedFileID, uint64 *punBytesDo
     return false;
 }
 
-bool GetItemInstallInfo( PublishedFileId_t nPublishedFileID, uint64 *punSizeOnDisk, char *pchFolder, uint32 cchFolderSize, bool *pbLegacyItem ) // returns true if item is installed
+bool GetItemInstallInfo( PublishedFileId_t nPublishedFileID, uint64 *punSizeOnDisk, STEAM_OUT_STRING_COUNT( cchFolderSize ) char *pchFolder, uint32 cchFolderSize, bool *pbLegacyItem ) // returns true if item is installed
 {
     PRINT_DEBUG("Steam_UGC::GetItemInstallInfo old\n");
-    return false;
+    return GetItemInstallInfo(nPublishedFileID, punSizeOnDisk, pchFolder, cchFolderSize, (uint32*) nullptr);
 }
 
 bool GetItemUpdateInfo( PublishedFileId_t nPublishedFileID, bool *pbNeedsUpdate, bool *pbIsDownloading, uint64 *punBytesDownloaded, uint64 *punBytesTotal )
@@ -708,7 +758,7 @@ bool GetItemUpdateInfo( PublishedFileId_t nPublishedFileID, bool *pbNeedsUpdate,
 bool GetItemInstallInfo( PublishedFileId_t nPublishedFileID, uint64 *punSizeOnDisk, char *pchFolder, uint32 cchFolderSize ) // returns true if item is installed
 {
     PRINT_DEBUG("Steam_UGC::GetItemInstallInfo older\n");
-    return false;
+    return GetItemInstallInfo(nPublishedFileID, punSizeOnDisk, pchFolder, cchFolderSize, (uint32*) nullptr);
 }
 
 
@@ -818,5 +868,21 @@ SteamAPICall_t DeleteItem( PublishedFileId_t nPublishedFileID )
     PRINT_DEBUG("Steam_UGC::DeleteItem\n");
     return 0;
 }
+
+// Show the app's latest Workshop EULA to the user in an overlay window, where they can accept it or not
+bool ShowWorkshopEULA()
+{
+    PRINT_DEBUG("%s\n", __FUNCTION__);
+    return false;
+}
+
+// Retrieve information related to the user's acceptance or not of the app's specific Workshop EULA
+STEAM_CALL_RESULT( WorkshopEULAStatus_t )
+SteamAPICall_t GetWorkshopEULAStatus()
+{
+    PRINT_DEBUG("%s\n", __FUNCTION__);
+    return 0;
+}
+
 
 };

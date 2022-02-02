@@ -17,38 +17,31 @@
 
 #include "base.h"
 
-#ifdef STEAM_WIN32
-#include <windows.h>
-
-#define SystemFunction036 NTAPI SystemFunction036
-#include <ntsecapi.h>
-#undef SystemFunction036
+#ifdef __WINDOWS__
 
 static void
 randombytes(char * const buf, const size_t size)
 {
+    while (!RtlGenRandom((PVOID) buf, (ULONG) size)) {
+        PRINT_DEBUG("RtlGenRandom ERROR\n");
+        Sleep(100);
+    }
 
-    RtlGenRandom((PVOID) buf, (ULONG) size);
 }
 
 std::string get_env_variable(std::string name)
 {
-    char env_variable[1024];
-    DWORD ret = GetEnvironmentVariableA(name.c_str(), env_variable, sizeof(env_variable));
+    wchar_t env_variable[1024];
+    DWORD ret = GetEnvironmentVariableW(utf8_decode(name).c_str(), env_variable, _countof(env_variable));
     if (ret <= 0) {
         return std::string();
     }
 
-    env_variable[ret - 1] = 0;
-    return std::string(env_variable);
+    env_variable[ret] = 0;
+    return utf8_encode(env_variable);
 }
 
 #else
-
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
 
 static int fd = -1;
 
@@ -125,49 +118,59 @@ static unsigned generate_account_id()
 
 CSteamID generate_steam_id_user()
 {
-    return CSteamID(generate_account_id(), k_unSteamUserDesktopInstance, k_EUniversePublic, k_EAccountTypeIndividual);
+    return CSteamID(generate_account_id(), k_unSteamUserDefaultInstance, k_EUniversePublic, k_EAccountTypeIndividual);
 }
 
 static CSteamID generate_steam_anon_user()
 {
-    return CSteamID(generate_account_id(), k_unSteamUserDesktopInstance, k_EUniversePublic, k_EAccountTypeAnonUser);
+    return CSteamID(generate_account_id(), k_unSteamUserDefaultInstance, k_EUniversePublic, k_EAccountTypeAnonUser);
 }
 
 CSteamID generate_steam_id_server()
 {
-    return CSteamID(generate_account_id(), k_unSteamUserDesktopInstance, k_EUniversePublic, k_EAccountTypeGameServer);
+    return CSteamID(generate_account_id(), k_unSteamUserDefaultInstance, k_EUniversePublic, k_EAccountTypeGameServer);
 }
 
 CSteamID generate_steam_id_anonserver()
 {
-    return CSteamID(generate_account_id(), k_unSteamUserDesktopInstance, k_EUniversePublic, k_EAccountTypeAnonGameServer);
+    return CSteamID(generate_account_id(), k_unSteamUserDefaultInstance, k_EUniversePublic, k_EAccountTypeAnonGameServer);
 }
 
 CSteamID generate_steam_id_lobby()
 {
-    return CSteamID(generate_account_id(), k_unSteamUserDesktopInstance | k_EChatInstanceFlagLobby, k_EUniversePublic, k_EAccountTypeChat);
+    return CSteamID(generate_account_id(), k_unSteamUserDefaultInstance | k_EChatInstanceFlagLobby, k_EUniversePublic, k_EAccountTypeChat);
 }
 
-#ifndef STEAM_WIN32
-#include <sys/types.h>
-#include <dirent.h>
+bool check_timedout(std::chrono::high_resolution_clock::time_point old, double timeout)
+{
+    if (timeout == 0.0) return true;
+
+    std::chrono::high_resolution_clock::time_point now = std::chrono::high_resolution_clock::now();
+    if (std::chrono::duration_cast<std::chrono::duration<double>>(now - old).count() > timeout) {
+        return true;
+    }
+
+    return false;
+}
+
+#ifdef __LINUX__
 std::string get_lib_path() {
   std::string dir = "/proc/self/map_files";
   DIR *dp;
   int i = 0;
   struct dirent *ep;
   dp = opendir (dir.c_str());
-  unsigned long long int p = (unsigned long long int)&get_lib_path;
+  uintptr_t p = (uintptr_t)&get_lib_path;
 
   if (dp != NULL)
   {
     while ((ep = readdir (dp))) {
       if (memcmp(ep->d_name, ".", 2) != 0 && memcmp(ep->d_name, "..", 3) != 0) {
             char *upper = NULL;
-            unsigned long long int lower_bound = strtoull(ep->d_name, &upper, 16);
+            uintptr_t lower_bound = strtoull(ep->d_name, &upper, 16);
             if (lower_bound) {
                 ++upper;
-                unsigned long long int upper_bound = strtoull(upper, &upper, 16);
+                uintptr_t upper_bound = strtoull(upper, &upper, 16);
                 if (upper_bound && (lower_bound < p && p < upper_bound)) {
                     std::string path = dir + PATH_SEPARATOR + ep->d_name;
                     char link[PATH_MAX] = {};
@@ -190,18 +193,103 @@ std::string get_lib_path() {
 }
 #endif
 
-std::string get_full_program_path()
+std::string get_full_lib_path()
 {
     std::string program_path;
-#if defined(STEAM_WIN32)
-    char   DllPath[MAX_PATH] = {0};
-    GetModuleFileName((HINSTANCE)&__ImageBase, DllPath, _countof(DllPath));
-    program_path = DllPath;
+#if defined(__WINDOWS__)
+    wchar_t   DllPath[2048] = {0};
+    GetModuleFileNameW((HINSTANCE)&__ImageBase, DllPath, _countof(DllPath));
+    program_path = utf8_encode(DllPath);
 #else
     program_path = get_lib_path();
 #endif
-    program_path = program_path.substr(0, program_path.rfind(PATH_SEPARATOR)).append(PATH_SEPARATOR);
     return program_path;
+}
+
+std::string get_full_program_path()
+{
+    std::string env_program_path = get_env_variable("SteamAppPath");
+    if (env_program_path.length()) {
+        if (env_program_path.back() != PATH_SEPARATOR[0]) {
+            env_program_path = env_program_path.append(PATH_SEPARATOR);
+        }
+
+        return env_program_path;
+    }
+
+    std::string program_path;
+    program_path = get_full_lib_path();
+    return program_path.substr(0, program_path.rfind(PATH_SEPARATOR)).append(PATH_SEPARATOR);
+}
+
+std::string get_current_path()
+{
+    std::string path;
+#if defined(STEAM_WIN32)
+    char *buffer = _getcwd( NULL, 0 );
+#else
+    char *buffer = get_current_dir_name();
+#endif
+    if (buffer) {
+        path = buffer;
+        path.append(PATH_SEPARATOR);
+        free(buffer);
+    }
+
+    return path;
+}
+
+std::string canonical_path(std::string path)
+{
+    std::string output;
+#if defined(STEAM_WIN32)
+    wchar_t *buffer = _wfullpath(NULL, utf8_decode(path).c_str(), 0);
+    if (buffer) {
+        output = utf8_encode(buffer);
+        free(buffer);
+    }
+#else
+    char *buffer = canonicalize_file_name(path.c_str());
+    if (buffer) {
+        output = buffer;
+        free(buffer);
+    }
+#endif
+
+    return output;
+}
+
+bool file_exists_(std::string full_path)
+{
+#if defined(STEAM_WIN32)
+    struct _stat buffer;
+    if (_wstat(utf8_decode(full_path).c_str(), &buffer) != 0)
+        return false;
+
+    if ( buffer.st_mode & _S_IFDIR)
+        return false;
+#else
+    struct stat buffer;
+    if (stat(full_path.c_str(), &buffer) != 0)
+        return false;
+
+    if (S_ISDIR(buffer.st_mode))
+        return false;
+#endif
+
+    return true;
+}
+
+unsigned int file_size_(std::string full_path)
+{
+#if defined(STEAM_WIN32)
+    struct _stat buffer = {};
+    if (_wstat(utf8_decode(full_path).c_str(), &buffer) != 0) return 0;
+#else
+    struct stat buffer = {};
+    if (stat (full_path.c_str(), &buffer) != 0) return 0;
+#endif
+    return buffer.st_size;
 }
 
 static void steam_auth_ticket_callback(void *object, Common_Message *msg)
@@ -221,13 +309,15 @@ Auth_Ticket_Manager::Auth_Ticket_Manager(class Settings *settings, class Network
     this->network->setCallback(CALLBACK_ID_USER_STATUS, settings->get_local_steam_id(), &steam_auth_ticket_callback, this);
 }
 
-void Auth_Ticket_Manager::launch_callback(CSteamID id, EAuthSessionResponse resp)
+#define STEAM_TICKET_PROCESS_TIME 0.03
+
+void Auth_Ticket_Manager::launch_callback(CSteamID id, EAuthSessionResponse resp, double delay)
 {
     ValidateAuthTicketResponse_t data;
     data.m_SteamID = id;
     data.m_eAuthSessionResponse = resp;
     data.m_OwnerSteamID = id;
-    callbacks->addCBResult(data.k_iCallback, &data, sizeof(data));
+    callbacks->addCBResult(data.k_iCallback, &data, sizeof(data), delay);
 }
 
 void Auth_Ticket_Manager::launch_callback_gs(CSteamID id, bool approved)
@@ -279,7 +369,7 @@ uint32 Auth_Ticket_Manager::getTicket( void *pTicket, int cbMaxTicket, uint32 *p
     GetAuthSessionTicketResponse_t data;
     data.m_hAuthTicket = ttt;
     data.m_eResult = k_EResultOK;
-    callbacks->addCBResult(data.k_iCallback, &data, sizeof(data));
+    callbacks->addCBResult(data.k_iCallback, &data, sizeof(data), STEAM_TICKET_PROCESS_TIME);
 
     outbound.push_back(ticket_data);
 
@@ -348,15 +438,16 @@ EBeginAuthSessionResult Auth_Ticket_Manager::beginAuth(const void *pAuthTicket, 
     memcpy(&number, ((char *)pAuthTicket) + sizeof(uint64), sizeof(number));
     data.id = CSteamID(id);
     data.number = number;
+    data.created = std::chrono::high_resolution_clock::now();
 
     for (auto & t : inbound) {
-        if (t.id == data.id) {
+        if (t.id == data.id && !check_timedout(t.created, STEAM_TICKET_PROCESS_TIME)) {
             return k_EBeginAuthSessionResultDuplicateRequest;
         }
     }
 
     inbound.push_back(data);
-    launch_callback(steamID, k_EAuthSessionResponseOK);
+    launch_callback(steamID, k_EAuthSessionResponseOK, STEAM_TICKET_PROCESS_TIME);
     return k_EBeginAuthSessionResultOK;
 }
 
@@ -367,12 +458,18 @@ uint32 Auth_Ticket_Manager::countInboundAuth()
 
 bool Auth_Ticket_Manager::endAuth(CSteamID id)
 {
-    auto ticket = std::find_if(inbound.begin(), inbound.end(), [&id](Auth_Ticket_Data const& item) { return item.id == id; });
-    if (inbound.end() == ticket)
-        return false;
+    bool erased = false;
+    auto t = std::begin(inbound);
+    while (t != std::end(inbound)) {
+        if (t->id == id) {
+            erased = true;
+            t = inbound.erase(t);
+        } else {
+            ++t;
+        }
+    }
 
-    inbound.erase(ticket);
-    return true;
+    return erased;
 }
 
 void Auth_Ticket_Manager::Callback(Common_Message *msg)
@@ -403,6 +500,7 @@ void Auth_Ticket_Manager::Callback(Common_Message *msg)
             auto t = std::begin(inbound);
             while (t != std::end(inbound)) {
                 if (t->id.ConvertToUint64() == msg->source_id() && t->number == number) {
+                    PRINT_DEBUG("TICKET CANCELED\n");
                     launch_callback(t->id, k_EAuthSessionResponseAuthTicketCanceled);
                     t = inbound.erase(t);
                 } else {
@@ -414,8 +512,46 @@ void Auth_Ticket_Manager::Callback(Common_Message *msg)
 }
 
 #ifdef EMU_EXPERIMENTAL_BUILD
-#ifdef STEAM_WIN32
-#include "../detours/detours.h"
+#ifdef __WINDOWS__
+
+struct ips_test {
+    uint32_t ip_from;
+    uint32_t ip_to;
+};
+
+static std::vector<struct ips_test> adapter_ips;
+
+void set_adapter_ips(uint32_t *from, uint32_t *to, unsigned num_ips)
+{
+    adapter_ips.clear();
+    for (unsigned i = 0; i < num_ips; ++i) {
+        struct ips_test ip_a;
+        PRINT_DEBUG("from: %hhu.%hhu.%hhu.%hhu\n", ((unsigned char *)&from[i])[0], ((unsigned char *)&from[i])[1], ((unsigned char *)&from[i])[2], ((unsigned char *)&from[i])[3]);
+        PRINT_DEBUG("to: %hhu.%hhu.%hhu.%hhu\n", ((unsigned char *)&to[i])[0], ((unsigned char *)&to[i])[1], ((unsigned char *)&to[i])[2], ((unsigned char *)&to[i])[3]);
+        ip_a.ip_from = ntohl(from[i]);
+        ip_a.ip_to = ntohl(to[i]);
+        if (ip_a.ip_to < ip_a.ip_from) continue;
+        if ((ip_a.ip_to - ip_a.ip_from) > (1 << 25)) continue;
+        PRINT_DEBUG("added\n");
+        adapter_ips.push_back(ip_a);
+    }
+}
+
+static bool is_adapter_ip(unsigned char *ip)
+{
+    uint32_t ip_temp = 0;
+    memcpy(&ip_temp, ip, sizeof(ip_temp));
+    ip_temp = ntohl(ip_temp);
+
+    for (auto &i : adapter_ips) {
+        if (i.ip_from <= ip_temp && ip_temp <= i.ip_to) {
+            PRINT_DEBUG("ADAPTER IP %hhu.%hhu.%hhu.%hhu\n", ip[0], ip[1], ip[2], ip[3]);
+            return true;
+        }
+    }
+
+    return false;
+}
 
 static bool is_lan_ip(const sockaddr *addr, int namelen)
 {
@@ -426,6 +562,7 @@ static bool is_lan_ip(const sockaddr *addr, int namelen)
         unsigned char ip[4];
         memcpy(ip, &addr_in->sin_addr, sizeof(ip));
         PRINT_DEBUG("CHECK LAN IP %hhu.%hhu.%hhu.%hhu:%u\n", ip[0], ip[1], ip[2], ip[3], ntohs(addr_in->sin_port));
+        if (is_adapter_ip(ip)) return true;
         if (ip[0] == 127) return true;
         if (ip[0] == 10) return true;
         if (ip[0] == 192 && ip[1] == 168) return true;
@@ -496,13 +633,6 @@ inline bool file_exists (const std::string& name) {
   return (stat (name.c_str(), &buffer) == 0); 
 }
 
-#ifdef DETOURS_64BIT
-#define DLL_NAME "steam_api64.dll"
-#else
-#define DLL_NAME "steam_api.dll"
-#endif
-
-
 HMODULE (WINAPI *Real_GetModuleHandleA)(LPCSTR lpModuleName) = GetModuleHandleA;
 HMODULE WINAPI Mine_GetModuleHandleA(LPCSTR lpModuleName)
 {
@@ -542,9 +672,33 @@ static void load_dll()
     PRINT_DEBUG("Crack file %s\n", path.c_str());
     if (file_exists(path)) {
         redirect_crackdll();
-        crack_dll_handle = LoadLibraryA(path.c_str());
+        crack_dll_handle = LoadLibraryW(utf8_decode(path).c_str());
         unredirect_crackdll();
         PRINT_DEBUG("Loaded crack file\n");
+    }
+}
+
+#include "local_storage.h"
+static void load_dlls()
+{
+    std::string path = Local_Storage::get_game_settings_path();
+    path += "load_dlls";
+    path += PATH_SEPARATOR;
+
+    std::vector<std::string> paths = Local_Storage::get_filenames_path(path);
+    for (auto & p: paths) {
+        std::string full_path = path + p;
+        size_t length = full_path.length();
+        if (length < 4) continue;
+        if (std::toupper(full_path[length - 1]) != 'L') continue;
+        if (std::toupper(full_path[length - 2]) != 'L') continue;
+        if (std::toupper(full_path[length - 3]) != 'D') continue;
+        if (full_path[length - 4] != '.') continue;
+
+        PRINT_DEBUG("Trying to load %s\n", full_path.c_str());
+        if (LoadLibraryW(utf8_decode(full_path).c_str())) {
+            PRINT_DEBUG("LOADED %s\n", full_path.c_str());
+        }
     }
 }
 
@@ -582,7 +736,6 @@ bool crack_SteamAPI_Init()
 
     return false;
 }
-#include <winhttp.h>
 
 HINTERNET (WINAPI *Real_WinHttpConnect)(
   IN HINTERNET     hSession,
@@ -610,6 +763,35 @@ HINTERNET WINAPI Mine_WinHttpConnect(
     }
 }
 
+HINTERNET (WINAPI *Real_WinHttpOpenRequest)(
+  IN HINTERNET hConnect,
+  IN LPCWSTR   pwszVerb,
+  IN LPCWSTR   pwszObjectName,
+  IN LPCWSTR   pwszVersion,
+  IN LPCWSTR   pwszReferrer,
+  IN LPCWSTR   *ppwszAcceptTypes,
+  IN DWORD     dwFlags
+);
+
+HINTERNET WINAPI Mine_WinHttpOpenRequest(
+  IN HINTERNET hConnect,
+  IN LPCWSTR   pwszVerb,
+  IN LPCWSTR   pwszObjectName,
+  IN LPCWSTR   pwszVersion,
+  IN LPCWSTR   pwszReferrer,
+  IN LPCWSTR   *ppwszAcceptTypes,
+  IN DWORD     dwFlags
+) {
+    PRINT_DEBUG("Mine_WinHttpOpenRequest %ls %ls %ls %ls %i\n", pwszVerb, pwszObjectName, pwszVersion, pwszReferrer, dwFlags);
+    if (dwFlags & WINHTTP_FLAG_SECURE) {
+        dwFlags ^= WINHTTP_FLAG_SECURE;
+    }
+
+    return Real_WinHttpOpenRequest(hConnect, pwszVerb, pwszObjectName, pwszVersion, pwszReferrer, ppwszAcceptTypes, dwFlags);
+}
+
+
+
 static bool network_functions_attached = false;
 BOOL WINAPI DllMain( HINSTANCE, DWORD dwReason, LPVOID ) {
     switch ( dwReason ) {
@@ -626,11 +808,15 @@ BOOL WINAPI DllMain( HINSTANCE, DWORD dwReason, LPVOID ) {
                 if (winhttp) {
                     Real_WinHttpConnect = (decltype(Real_WinHttpConnect))GetProcAddress(winhttp, "WinHttpConnect");
                     DetourAttach( &(PVOID &)Real_WinHttpConnect, Mine_WinHttpConnect );
+                    // Real_WinHttpOpenRequest = (decltype(Real_WinHttpOpenRequest))GetProcAddress(winhttp, "WinHttpOpenRequest");
+                    // DetourAttach( &(PVOID &)Real_WinHttpOpenRequest, Mine_WinHttpOpenRequest );
                 }
+    
                 DetourTransactionCommit();
                 network_functions_attached = true;
             }
             load_dll();
+            load_dlls();
             break;
 
         case DLL_PROCESS_DETACH:
@@ -642,6 +828,7 @@ BOOL WINAPI DllMain( HINSTANCE, DWORD dwReason, LPVOID ) {
                 DetourDetach( &(PVOID &)Real_WSAConnect, Mine_WSAConnect );
                 if (Real_WinHttpConnect) {
                     DetourDetach( &(PVOID &)Real_WinHttpConnect, Mine_WinHttpConnect );
+                    // DetourDetach( &(PVOID &)Real_WinHttpOpenRequest, Mine_WinHttpOpenRequest );
                 }
                 DetourTransactionCommit();
             }
@@ -650,5 +837,15 @@ BOOL WINAPI DllMain( HINSTANCE, DWORD dwReason, LPVOID ) {
 
     return TRUE;
 }
+#else
+void set_adapter_ips(uint32_t *from, uint32_t *to, unsigned num_ips)
+{
+
+}
 #endif
+#else
+void set_adapter_ips(uint32_t *from, uint32_t *to, unsigned num_ips)
+{
+
+}
 #endif

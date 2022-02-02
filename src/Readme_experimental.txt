@@ -30,3 +30,6 @@ All ips except these ranges are blocked:
 192.168.0.0 - 192.168.255.255
 224.0.0.0 - 255.255.255.255
 
+
+Support for loading any dlls:
+Any files put in the steam_settings\load_dlls\ folder will be loaded automatically using the LoadLibraryA function.

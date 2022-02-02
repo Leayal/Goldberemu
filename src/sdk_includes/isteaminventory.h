@@ -1,4 +1,4 @@
-//====== Copyright ï¿½ 1996-2014 Valve Corporation, All rights reserved. =======
+//====== Copyright © 1996-2014 Valve Corporation, All rights reserved. =======
 //
 // Purpose: interface to Steam Inventory
 //
@@ -350,13 +350,24 @@ public:
 	// Remove the property on the item
 	virtual bool RemoveProperty( SteamInventoryUpdateHandle_t handle, SteamItemInstanceID_t nItemID, const char *pchPropertyName ) = 0;
 	// Accessor methods to set properties on items
+
+	STEAM_FLAT_NAME( SetPropertyString )
 	virtual bool SetProperty( SteamInventoryUpdateHandle_t handle, SteamItemInstanceID_t nItemID, const char *pchPropertyName, const char *pchPropertyValue ) = 0;
+
+	STEAM_FLAT_NAME( SetPropertyBool )
 	virtual bool SetProperty( SteamInventoryUpdateHandle_t handle, SteamItemInstanceID_t nItemID, const char *pchPropertyName, bool bValue ) = 0;
+
+	STEAM_FLAT_NAME( SetPropertyInt64 )
 	virtual bool SetProperty( SteamInventoryUpdateHandle_t handle, SteamItemInstanceID_t nItemID, const char *pchPropertyName, int64 nValue ) = 0;
+
+	STEAM_FLAT_NAME( SetPropertyFloat )
 	virtual bool SetProperty( SteamInventoryUpdateHandle_t handle, SteamItemInstanceID_t nItemID, const char *pchPropertyName, float flValue ) = 0;
+
 	// Submit the update request by handle
 	virtual bool SubmitUpdateProperties( SteamInventoryUpdateHandle_t handle, SteamInventoryResult_t * pResultHandle ) = 0;
 	
+	STEAM_METHOD_DESC(Look up the given token and return a pseudo-Inventory item.)
+	virtual bool InspectItem( SteamInventoryResult_t *pResultHandle, const char *pchItemToken ) = 0;
 };
 
 #define STEAMINVENTORY_INTERFACE_VERSION "STEAMINVENTORY_INTERFACE_V003"
@@ -376,7 +387,7 @@ STEAM_DEFINE_GAMESERVER_INTERFACE_ACCESSOR( ISteamInventory *, SteamGameServerIn
 // always be exactly one callback per handle.
 struct SteamInventoryResultReady_t
 {
-	enum { k_iCallback = k_iClientInventoryCallbacks + 0 };
+	enum { k_iCallback = k_iSteamInventoryCallbacks + 0 };
 	SteamInventoryResult_t m_handle;
 	EResult m_result;
 };
@@ -391,7 +402,7 @@ struct SteamInventoryResultReady_t
 // afterwards; this is an additional notification for your convenience.
 struct SteamInventoryFullUpdate_t
 {
-	enum { k_iCallback = k_iClientInventoryCallbacks + 1 };
+	enum { k_iCallback = k_iSteamInventoryCallbacks + 1 };
 	SteamInventoryResult_t m_handle;
 };
 
@@ -402,13 +413,13 @@ struct SteamInventoryFullUpdate_t
 // a definition update in order to process results from the server.
 struct SteamInventoryDefinitionUpdate_t
 {
-	enum { k_iCallback = k_iClientInventoryCallbacks + 2 };
+	enum { k_iCallback = k_iSteamInventoryCallbacks + 2 };
 };
 
 // Returned 
 struct SteamInventoryEligiblePromoItemDefIDs_t
 {
-	enum { k_iCallback = k_iClientInventoryCallbacks + 3 };
+	enum { k_iCallback = k_iSteamInventoryCallbacks + 3 };
 	EResult m_result;
 	CSteamID m_steamID;
 	int m_numEligiblePromoItemDefs;
@@ -418,7 +429,7 @@ struct SteamInventoryEligiblePromoItemDefIDs_t
 // Triggered from StartPurchase call
 struct SteamInventoryStartPurchaseResult_t
 {
-	enum { k_iCallback = k_iClientInventoryCallbacks + 4 };
+	enum { k_iCallback = k_iSteamInventoryCallbacks + 4 };
 	EResult m_result;
 	uint64 m_ulOrderID;
 	uint64 m_ulTransID;
@@ -428,7 +439,7 @@ struct SteamInventoryStartPurchaseResult_t
 // Triggered from RequestPrices
 struct SteamInventoryRequestPricesResult_t
 {
-	enum { k_iCallback = k_iClientInventoryCallbacks + 5 };
+	enum { k_iCallback = k_iSteamInventoryCallbacks + 5 };
 	EResult m_result;
 	char m_rgchCurrency[4];
 };

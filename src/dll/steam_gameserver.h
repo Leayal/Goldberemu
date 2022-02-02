@@ -28,7 +28,15 @@ struct Gameserver_Outgoing_Packet {
 	uint16 port;
 };
 
-class Steam_GameServer : public ISteamGameServer
+class Steam_GameServer : 
+public ISteamGameServer005,
+public ISteamGameServer008,
+public ISteamGameServer009,
+public ISteamGameServer010,
+public ISteamGameServer011,
+public ISteamGameServer012,
+public ISteamGameServer013,
+public ISteamGameServer
 {
     class Settings *settings;
     class Networking *network;
@@ -88,6 +96,11 @@ public:
 	/// @see SteamServerConnectFailure_t
 	/// @see SteamServersDisconnected_t
 	void LogOn( const char *pszToken );
+	void LogOn(
+		const char *pszAccountName,
+		const char *pszPassword
+	);
+	void LogOn();
 
 	/// Login to a generic, anonymous account.
 	///
@@ -195,6 +208,40 @@ public:
 	// Return Value: true if successful, false if failure (ie, steamIDUser wasn't for an active player)
 	bool BUpdateUserData( CSteamID steamIDUser, const char *pchPlayerName, uint32 uScore );
 
+	// You shouldn't need to call this as it is called internally by SteamGameServer_Init() and can only be called once.
+	//
+	// To update the data in this call which may change during the servers lifetime see UpdateServerStatus() below.
+	//
+	// Input:	nGameAppID - The Steam assigned AppID for the game
+	//			unServerFlags - Any applicable combination of flags (see k_unServerFlag____ constants below)
+	//			unGameIP - The IP Address the server is listening for client connections on (might be INADDR_ANY)
+	//			unGamePort - The port which the server is listening for client connections on
+	//			unSpectatorPort - the port on which spectators can join to observe the server, 0 if spectating is not supported
+	//			usQueryPort - The port which the ISteamMasterServerUpdater API should use in order to listen for matchmaking requests
+	//			pchGameDir - A unique string identifier for your game
+	//			pchVersion - The current version of the server as a string like 1.0.0.0
+	//			bLanMode - Is this a LAN only server?
+	//			
+	// bugbug jmccaskey - figure out how to remove this from the API and only expose via SteamGameServer_Init... or make this actually used,
+	// and stop calling it in SteamGameServer_Init()?
+	bool BSetServerType( uint32 unServerFlags, uint32 unGameIP, uint16 unGamePort, 
+								uint16 unSpectatorPort, uint16 usQueryPort, const char *pchGameDir, const char *pchVersion, bool bLANMode );
+
+	// Updates server status values which shows up in the server browser and matchmaking APIs
+	void UpdateServerStatus( int cPlayers, int cPlayersMax, int cBotPlayers, 
+									 const char *pchServerName, const char *pSpectatorServerName, 
+									 const char *pchMapName );
+
+	// This can be called if spectator goes away or comes back (passing 0 means there is no spectator server now).
+	void UpdateSpectatorPort( uint16 unSpectatorPort );
+
+	// Sets a string defining the "gametype" for this server, this is optional, but if it is set
+	// it allows users to filter in the matchmaking/server-browser interfaces based on the value
+	void SetGameType( const char *pchGameType ); 
+
+	// Ask if a user has a specific achievement for this game, will get a callback on reply
+    bool BGetUserAchievementStatus( CSteamID steamID, const char *pchAchievementName );
+
 	// New auth system APIs - do not mix with the old auth system APIs.
 	// ----------------------------------------------------------------
 
@@ -230,7 +277,9 @@ public:
 	// Returns the public IP of the server according to Steam, useful when the server is 
 	// behind NAT and you want to advertise its IP in a lobby for other clients to directly
 	// connect to
-	uint32 GetPublicIP();
+	uint32 GetPublicIP_old();
+	SteamIPAddress_t GetPublicIP();
+	void GetPublicIP_fix(SteamIPAddress_t *out);
 
 // These are in GameSocketShare mode, where instead of ISteamGameServer creating its own
 // socket to talk to the master server on, it lets the game use its socket to forward messages
@@ -263,6 +312,16 @@ public:
 	// you want it to be active (default: off).
 	void EnableHeartbeats( bool bActive );
 
+	/// Indicate whether you wish to be listed on the master server list
+	/// and/or respond to server browser / LAN discovery packets.
+	/// The server starts with this value set to false.  You should set all
+	/// relevant server parameters before enabling advertisement on the server.
+	///
+	/// (This function used to be named EnableHeartbeats, so if you are wondering
+	/// where that function went, it's right here.  It does the same thing as before,
+	/// the old name was just confusing.)
+	void SetAdvertiseServerActive( bool bActive );
+
 	// You usually don't need to modify this.
 	// Pass -1 to use the default value for iHeartbeatInterval.
 	// Some mods change this.
@@ -270,6 +329,9 @@ public:
 
 	// Force a heartbeat to steam at the next opportunity
 	void ForceHeartbeat();
+
+	void SetMasterServerHeartbeatInterval_DEPRECATED( int iHeartbeatInterval );
+	void ForceMasterServerHeartbeat_DEPRECATED();
 
 	// associate this game server with this clan for the purposes of computing player compat
 	STEAM_CALL_RESULT( AssociateWithClanResult_t )

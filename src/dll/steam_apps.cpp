@@ -16,6 +16,7 @@
    <http://www.gnu.org/licenses/>.  */
 
 #include "steam_apps.h"
+#include "../sha/sha1.hpp"
 
 Steam_Apps::Steam_Apps(Settings *settings, class SteamCallResults *callback_results)
 {
@@ -57,7 +58,7 @@ const char *Steam_Apps::GetAvailableGameLanguages()
 {
     PRINT_DEBUG("GetAvailableGameLanguages\n");
     //TODO?
-    return "";
+    return settings->get_language();
 }
 
 
@@ -181,19 +182,49 @@ bool Steam_Apps::MarkContentCorrupt( bool bMissingFilesOnly )
 // return installed depots in mount order
 uint32 Steam_Apps::GetInstalledDepots( AppId_t appID, DepotId_t *pvecDepots, uint32 cMaxDepots )
 {
-    PRINT_DEBUG("GetInstalledDepots\n");
-    return 0;
+    PRINT_DEBUG("GetInstalledDepots %u, %u\n", appID, cMaxDepots);
+    //TODO not sure about the behavior of this function, I didn't actually test this.
+    if (!pvecDepots) return 0;
+    std::lock_guard<std::recursive_mutex> lock(global_mutex);
+    unsigned int count = settings->depots.size();
+    if (cMaxDepots < count) count = cMaxDepots;
+    std::copy(settings->depots.begin(), settings->depots.begin() + count, pvecDepots);
+    return count;
+}
+
+uint32 Steam_Apps::GetInstalledDepots( DepotId_t *pvecDepots, uint32 cMaxDepots )
+{
+    PRINT_DEBUG("GetInstalledDepots old\n");
+    return GetInstalledDepots( settings->get_local_game_id().AppID(), pvecDepots, cMaxDepots );
 }
 
 // returns current app install folder for AppID, returns folder name length
 uint32 Steam_Apps::GetAppInstallDir( AppId_t appID, char *pchFolder, uint32 cchFolderBufferSize )
 {
-    PRINT_DEBUG("GetAppInstallDir %u\n", cchFolderBufferSize);
+    PRINT_DEBUG("GetAppInstallDir %u %p %u\n", appID, pchFolder, cchFolderBufferSize);
+    std::lock_guard<std::recursive_mutex> lock(global_mutex);
     //TODO return real path instead of dll path
-    if (!pchFolder || !cchFolderBufferSize) return 0;
-    std::string path = get_full_program_path();
-    snprintf(pchFolder, cchFolderBufferSize, "%s", path.c_str());
-    return strlen(pchFolder);
+    std::string installed_path = settings->getAppInstallPath(appID);
+
+    if (installed_path.size() == 0) {
+        std::string dll_path = get_full_program_path();
+        std::string current_path = get_current_path();
+        PRINT_DEBUG("paths %s %s\n", dll_path.c_str(), current_path.c_str());
+
+        //Just pick the smallest path, it has the most chances of being the good one
+        if (dll_path.size() > current_path.size() && current_path.size()) {
+            installed_path = current_path;
+        } else {
+            installed_path = dll_path;
+        }
+    }
+
+    PRINT_DEBUG("path %s\n", installed_path.c_str());
+    if (cchFolderBufferSize && pchFolder) {
+        snprintf(pchFolder, cchFolderBufferSize, "%s", installed_path.c_str());
+    }
+
+    return installed_path.length(); //Real steam always returns the actual path length, not the copied one.
 }
 
 // returns true if that app is installed (not necessarily owned)
@@ -233,7 +264,7 @@ bool Steam_Apps::GetDlcDownloadProgress( AppId_t nAppID, uint64 *punBytesDownloa
 int Steam_Apps::GetAppBuildId()
 {
     PRINT_DEBUG("GetAppBuildId\n");
-    return 1;
+    return this->settings->build_id;
 }
 
 
@@ -250,8 +281,23 @@ void Steam_Apps::RequestAllProofOfPurchaseKeys()
 STEAM_CALL_RESULT( FileDetailsResult_t )
 SteamAPICall_t Steam_Apps::GetFileDetails( const char* pszFileName )
 {
-    PRINT_DEBUG("GetFileDetails\n");
-    return 0;
+    PRINT_DEBUG("GetFileDetails %s\n", pszFileName);
+    FileDetailsResult_t data = {};
+    //TODO? this function should only return found if file is actually part of the steam depots
+    if (file_exists_(pszFileName)) {
+        data.m_eResult = k_EResultOK; //
+        std::ifstream stream(utf8_decode(pszFileName), std::ios::binary);
+        SHA1 checksum;
+        checksum.update(stream);
+        checksum.final().copy((char *)data.m_FileSHA, sizeof(data.m_FileSHA));
+        data.m_ulFileSize = file_size_(pszFileName);
+        //TODO data.m_unFlags; 0 is file //TODO: check if 64 is folder
+    } else {
+        data.m_eResult = k_EResultFileNotFound;
+    }
+
+    std::lock_guard<std::recursive_mutex> lock(global_mutex);
+    return callback_results->addCallResult(data.k_iCallback, &data, sizeof(data));
 }
 
 // Get command line if game was launched via Steam URL, e.g. steam://run/<appid>//<command line>/.
@@ -272,5 +318,12 @@ int Steam_Apps::GetLaunchCommandLine( char *pszCommandLine, int cubCommandLine )
 bool Steam_Apps::BIsSubscribedFromFamilySharing()
 {
     PRINT_DEBUG("BIsSubscribedFromFamilySharing\n");
+    return false;
+}
+
+// check if game is a timed trial with limited playtime
+bool Steam_Apps::BIsTimedTrial( uint32* punSecondsAllowed, uint32* punSecondsPlayed )
+{
+    PRINT_DEBUG("BIsTimedTrial\n");
     return false;
 }

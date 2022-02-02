@@ -55,6 +55,7 @@ bool Steam_GameServer::InitGameServer( uint32 unIP, uint16 usGamePort, uint16 us
     server_data.set_query_port(usQueryPort);
     server_data.set_offline(false);
     if (!settings->get_local_game_id().AppID()) settings->set_game_id(CGameID(nGameAppId));
+    //TODO: flags should be k_unServerFlag
     flags = unFlags;
     policy_response_called = false;
     call_servers_connected = false;
@@ -123,6 +124,14 @@ void Steam_GameServer::LogOn( const char *pszToken )
     logged_in = true;
 }
 
+void Steam_GameServer::LogOn(
+		const char *pszAccountName,
+		const char *pszPassword
+	)
+{
+        PRINT_DEBUG("LogOn %s %s\n", pszAccountName, pszPassword);
+        LogOn(pszAccountName);
+}
 
 /// Login to a generic, anonymous account.
 ///
@@ -136,6 +145,11 @@ void Steam_GameServer::LogOnAnonymous()
     logged_in = true;
 }
 
+void Steam_GameServer::LogOn()
+{
+    PRINT_DEBUG("LogOn\n");
+    LogOnAnonymous();
+}
 
 /// Begin process of logging game server out of steam
 void Steam_GameServer::LogOff()
@@ -162,13 +176,15 @@ bool Steam_GameServer::BSecure()
 {
     PRINT_DEBUG("BSecure\n");
     std::lock_guard<std::recursive_mutex> lock(global_mutex);
-    return flags == eServerModeAuthenticationAndSecure;
+    if (!policy_response_called) return false;
+    return !!(flags & k_unServerFlagSecure);
 }
  
 CSteamID Steam_GameServer::GetSteamID()
 {
     PRINT_DEBUG("Steam_GameServer::GetSteamID\n");
     std::lock_guard<std::recursive_mutex> lock(global_mutex);
+    if (!logged_in) return k_steamIDNil;
     return settings->get_local_steam_id();
 }
 
@@ -368,6 +384,79 @@ bool Steam_GameServer::BUpdateUserData( CSteamID steamIDUser, const char *pchPla
     return true;
 }
 
+// You shouldn't need to call this as it is called internally by SteamGameServer_Init() and can only be called once.
+//
+// To update the data in this call which may change during the servers lifetime see UpdateServerStatus() below.
+//
+// Input:	nGameAppID - The Steam assigned AppID for the game
+//			unServerFlags - Any applicable combination of flags (see k_unServerFlag____ constants below)
+//			unGameIP - The IP Address the server is listening for client connections on (might be INADDR_ANY)
+//			unGamePort - The port which the server is listening for client connections on
+//			unSpectatorPort - the port on which spectators can join to observe the server, 0 if spectating is not supported
+//			usQueryPort - The port which the ISteamMasterServerUpdater API should use in order to listen for matchmaking requests
+//			pchGameDir - A unique string identifier for your game
+//			pchVersion - The current version of the server as a string like 1.0.0.0
+//			bLanMode - Is this a LAN only server?
+//			
+// bugbug jmccaskey - figure out how to remove this from the API and only expose via SteamGameServer_Init... or make this actually used,
+// and stop calling it in SteamGameServer_Init()?
+bool Steam_GameServer::BSetServerType( uint32 unServerFlags, uint32 unGameIP, uint16 unGamePort, 
+                            uint16 unSpectatorPort, uint16 usQueryPort, const char *pchGameDir, const char *pchVersion, bool bLANMode )
+{
+    PRINT_DEBUG("BSetServerType\n");
+    std::lock_guard<std::recursive_mutex> lock(global_mutex);
+    server_data.set_ip(unGameIP);
+    server_data.set_port(unGamePort);
+    server_data.set_query_port(usQueryPort);
+    server_data.set_spectator_port(unSpectatorPort);
+
+    std::string version(pchVersion);
+    version.erase(std::remove(version.begin(), version.end(), ' '), version.end());
+    version.erase(std::remove(version.begin(), version.end(), '.'), version.end());
+    server_data.set_version(stoi(version));
+    flags = unServerFlags;
+
+    //TODO?
+    return true;
+}
+
+// Updates server status values which shows up in the server browser and matchmaking APIs
+void Steam_GameServer::UpdateServerStatus( int cPlayers, int cPlayersMax, int cBotPlayers, 
+                                    const char *pchServerName, const char *pSpectatorServerName, 
+                                    const char *pchMapName )
+{
+    PRINT_DEBUG("UpdateServerStatus\n");
+    std::lock_guard<std::recursive_mutex> lock(global_mutex);
+    server_data.set_num_players(cPlayers);
+    server_data.set_max_player_count(cPlayersMax);
+    server_data.set_bot_player_count(cBotPlayers);
+    server_data.set_server_name(pchServerName);
+    server_data.set_spectator_server_name(pSpectatorServerName);
+    server_data.set_map_name(pchMapName);
+}
+
+// This can be called if spectator goes away or comes back (passing 0 means there is no spectator server now).
+void Steam_GameServer::UpdateSpectatorPort( uint16 unSpectatorPort )
+{
+    PRINT_DEBUG("UpdateSpectatorPort\n");
+    SetSpectatorPort(unSpectatorPort);
+}
+
+// Sets a string defining the "gametype" for this server, this is optional, but if it is set
+// it allows users to filter in the matchmaking/server-browser interfaces based on the value
+void Steam_GameServer::SetGameType( const char *pchGameType )
+{
+    PRINT_DEBUG("SetGameType\n");
+    std::lock_guard<std::recursive_mutex> lock(global_mutex);
+}
+
+// Ask if a user has a specific achievement for this game, will get a callback on reply
+bool Steam_GameServer::BGetUserAchievementStatus( CSteamID steamID, const char *pchAchievementName )
+{
+    PRINT_DEBUG("BGetUserAchievementStatus\n");
+    std::lock_guard<std::recursive_mutex> lock(global_mutex);
+    return false;
+}
 
 // New auth system APIs - do not mix with the old auth system APIs.
 // ----------------------------------------------------------------
@@ -453,15 +542,28 @@ SteamAPICall_t Steam_GameServer::GetServerReputation()
 // Returns the public IP of the server according to Steam, useful when the server is 
 // behind NAT and you want to advertise its IP in a lobby for other clients to directly
 // connect to
-uint32 Steam_GameServer::GetPublicIP()
+uint32 Steam_GameServer::GetPublicIP_old()
 {
-    PRINT_DEBUG("GetPublicIP\n");
+    PRINT_DEBUG("GetPublicIP_old\n");
     std::lock_guard<std::recursive_mutex> lock(global_mutex);
     uint32 ip = network->getOwnIP();
     PRINT_DEBUG("%X\n", ip);
     return ip;
 }
 
+SteamIPAddress_t Steam_GameServer::GetPublicIP()
+{
+    PRINT_DEBUG("GetPublicIP\n");
+    SteamIPAddress_t ip = SteamIPAddress_t::IPv4Any();
+    ip.m_unIPv4 = GetPublicIP_old();
+    return ip;
+}
+
+void Steam_GameServer::GetPublicIP_fix(SteamIPAddress_t *out)
+{
+    PRINT_DEBUG("GetPublicIP_fix\n");
+    if (out) *out = GetPublicIP();
+}
 
 // These are in GameSocketShare mode, where instead of ISteamGameServer creating its own
 // socket to talk to the master server on, it lets the game use its socket to forward messages
@@ -516,6 +618,19 @@ void Steam_GameServer::EnableHeartbeats( bool bActive )
     PRINT_DEBUG("EnableHeartbeats\n");
 }
 
+/// Indicate whether you wish to be listed on the master server list
+/// and/or respond to server browser / LAN discovery packets.
+/// The server starts with this value set to false.  You should set all
+/// relevant server parameters before enabling advertisement on the server.
+///
+/// (This function used to be named EnableHeartbeats, so if you are wondering
+/// where that function went, it's right here.  It does the same thing as before,
+/// the old name was just confusing.)
+void Steam_GameServer::SetAdvertiseServerActive( bool bActive )
+{
+    PRINT_DEBUG("SetAdvertiseServerActive\n");
+    EnableHeartbeats(bActive);
+}
 
 // You usually don't need to modify this.
 // Pass -1 to use the default value for iHeartbeatInterval.
@@ -525,11 +640,21 @@ void Steam_GameServer::SetHeartbeatInterval( int iHeartbeatInterval )
     PRINT_DEBUG("SetHeartbeatInterval\n");
 }
 
+void Steam_GameServer::SetMasterServerHeartbeatInterval_DEPRECATED( int iHeartbeatInterval )
+{
+    PRINT_DEBUG("SetMasterServerHeartbeatInterval_DEPRECATED\n");
+}
+
 
 // Force a heartbeat to steam at the next opportunity
 void Steam_GameServer::ForceHeartbeat()
 {
     PRINT_DEBUG("ForceHeartbeat\n");
+}
+
+void Steam_GameServer::ForceMasterServerHeartbeat_DEPRECATED()
+{
+    PRINT_DEBUG("ForceMasterServerHeartbeat_DEPRECATED\n");
 }
 
 
@@ -561,14 +686,14 @@ void Steam_GameServer::RunCallbacks()
     if (temp_call_servers_connected) {
         PRINT_DEBUG("Steam_GameServer::SteamServersConnected_t\n");
         SteamServersConnected_t data;
-        callbacks->addCBResult(data.k_iCallback, &data, sizeof(data));
+        callbacks->addCBResult(data.k_iCallback, &data, sizeof(data), 0.1);
     }
 
     if (logged_in && !policy_response_called) {
         PRINT_DEBUG("Steam_GameServer::GSPolicyResponse_t\n");
         GSPolicyResponse_t data;
-        data.m_bSecure = flags == eServerModeAuthenticationAndSecure;
-        callbacks->addCBResult(data.k_iCallback, &data, sizeof(data));
+        data.m_bSecure = !!(flags & k_unServerFlagSecure);
+        callbacks->addCBResult(data.k_iCallback, &data, sizeof(data), 0.11);
         policy_response_called = true;
     }
 

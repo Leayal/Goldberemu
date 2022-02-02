@@ -19,7 +19,9 @@
 
 class Steam_Networking_Sockets_Serialized :
 public ISteamNetworkingSocketsSerialized002,
-public ISteamNetworkingSocketsSerialized003
+public ISteamNetworkingSocketsSerialized003,
+public ISteamNetworkingSocketsSerialized004,
+public ISteamNetworkingSocketsSerialized005
 {
     class Settings *settings;
     class Networking *network;
@@ -116,6 +118,23 @@ void PostConnectionStateMsg( const void *pMsg, uint32 cbMsg )
     PRINT_DEBUG("Steam_Networking_Sockets_Serialized::PostConnectionStateMsg\n");
 }
 
+bool GetSTUNServer(int dont_know, char *buf, unsigned int len)
+{
+    PRINT_DEBUG("Steam_Networking_Sockets_Serialized::GetSTUNServer %i %p %u\n", dont_know, buf, len);
+    return false;
+}
+
+bool BAllowDirectConnectToPeer(SteamNetworkingIdentity const &identity)
+{
+    PRINT_DEBUG("Steam_Networking_Sockets_Serialized::BAllowDirectConnectToPeer\n");
+    return true;
+}
+
+int BeginAsyncRequestFakeIP(int a)
+{
+    PRINT_DEBUG("Steam_Networking_Sockets_Serialized::BeginAsyncRequestFakeIP\n");
+    return true;
+}
 
 void RunCallbacks()
 {

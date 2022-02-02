@@ -434,7 +434,7 @@ std::string Local_Storage::get_user_appdata_path()
         }
     }
 #endif
-    return user_appdata_path.append(PATH_SEPARATOR).append(PROGRAM_NAME).append(" Saves");
+    return user_appdata_path.append(PATH_SEPARATOR).append(PROGRAM_NAME_1).append(PROGRAM_NAME_2).append(PROGRAM_NAME_3).append(PROGRAM_NAME_4).append(PROGRAM_NAME_5).append(PROGRAM_NAME_6).append(PROGRAM_NAME_7).append(PROGRAM_NAME_8).append(" Saves");
 }
 
 static std::string replace_with(std::string s, std::string const &old, const char *new_str)
@@ -590,106 +590,6 @@ int Local_Storage::get_data_settings(std::string file, char *data, unsigned int 
     return get_file_data(full_path, data, max_length);
 }
 
-
-int Local_Storage::store_file_wstr(std::string folder, std::string file, wchar_t* data, unsigned int length)
-{
-    if (folder.back() != *PATH_SEPARATOR) {
-        folder.append(PATH_SEPARATOR);
-    }
-
-    file = sanitize_file_name(file);
-    std::string::size_type pos = file.rfind(PATH_SEPARATOR);
-
-    std::string file_folder;
-    if (pos == 0 || pos == std::string::npos) {
-        file_folder = "";
-    }
-    else {
-        file_folder = file.substr(0, pos);
-    }
-
-    create_directory(folder + file_folder);
-    std::wofstream myfile;
-    myfile.open(utf8_decode(folder + file), std::ios::binary | std::ios::out);
-    if (!myfile.is_open()) return -1;
-    myfile.write(data, length);
-    int position = myfile.tellp();
-    myfile.close();
-    return position;
-}
-
-int Local_Storage::store_wstr(std::string folder, std::string file, wchar_t* data, unsigned int length)
-{
-    if (folder.back() != *PATH_SEPARATOR) {
-        folder.append(PATH_SEPARATOR);
-    }
-
-    return store_file_wstr(save_directory + appid + folder, file, data, length);
-}
-
-int Local_Storage::store_wstr_settings(std::string file, wchar_t* data, unsigned int length)
-{
-    return store_file_wstr(get_global_settings_path(), file, data, length);
-}
-
-int Local_Storage::get_file_wstr(std::string full_path, wchar_t* data, unsigned int max_length, unsigned int offset)
-{
-    std::wstring buffer = utf8_decode(full_path);            // stores file contents
-
-    const wchar_t* p = buffer.c_str();
-    FILE* f = _wfopen(p, L"rtS, ccs=UTF-8");
-
-    // Failed to open file
-    if (f == NULL)
-    {
-        return -1;
-    }
-
-    struct _stat fileinfo;
-    _wstat(p, &fileinfo);
-    size_t filesize = fileinfo.st_size;
-    if (filesize > max_length)
-    {
-        filesize = max_length;
-    }
-
-    // Read entire file contents in to memory
-    std::size_t wchars_read;
-    if (filesize > 0)
-    {
-        wchars_read = fread(data, sizeof(wchar_t), filesize, f);
-    }
-    else
-    {
-        wchars_read = 0L;
-    }
-
-    fclose(f);
-    
-    return static_cast<int>(wchars_read);
-}
-
-int Local_Storage::get_wstr(std::string folder, std::string file, wchar_t* data, unsigned int max_length, unsigned int offset)
-{
-    file = sanitize_file_name(file);
-    if (folder.back() != *PATH_SEPARATOR) {
-        folder.append(PATH_SEPARATOR);
-    }
-
-    std::string full_path = save_directory + appid + folder + file;
-    return get_file_wstr(full_path, data, max_length, offset);
-}
-
-int Local_Storage::get_wstr_settings(std::string file, wchar_t* data, unsigned int max_length)
-{
-    file = sanitize_file_name(file);
-    std::string full_path = get_global_settings_path() + file;
-    return get_file_wstr(full_path, data, max_length);
-}
-
-
-
-
 int Local_Storage::count_files(std::string folder)
 {
     if (folder.back() != *PATH_SEPARATOR) {
@@ -707,24 +607,7 @@ bool Local_Storage::file_exists(std::string folder, std::string file)
     }
 
     std::string full_path = save_directory + appid + folder + file;
-
-#if defined(STEAM_WIN32)
-    struct _stat buffer;
-    if (_wstat(utf8_decode(full_path).c_str(), &buffer) != 0)
-        return false;
-
-    if ( buffer.st_mode & _S_IFDIR)
-        return false;
-#else
-    struct stat buffer;
-    if (stat(full_path.c_str(), &buffer) != 0)
-        return false;
-
-    if (S_ISDIR(buffer.st_mode))
-        return false;
-#endif
-
-    return true;
+    return file_exists_(full_path);
 }
 
 unsigned int Local_Storage::file_size(std::string folder, std::string file)
@@ -735,15 +618,7 @@ unsigned int Local_Storage::file_size(std::string folder, std::string file)
     }
 
     std::string full_path = save_directory + appid + folder + file;
-
-#if defined(STEAM_WIN32)
-    struct _stat buffer = {};
-    if (_wstat(utf8_decode(full_path).c_str(), &buffer) != 0) return 0;
-#else
-    struct stat buffer = {};
-    if (stat (full_path.c_str(), &buffer) != 0) return 0;
-#endif
-    return buffer.st_size;
+    return file_size_(full_path);
 }
 
 bool Local_Storage::file_delete(std::string folder, std::string file)

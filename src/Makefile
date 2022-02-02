@@ -1,8 +1,8 @@
 .DEFAULT_GOAL := all
 
 CXX=clang++
-CXX_FLAGS += -fPIC -std=c++11
-LD_FLAGS += -shared -lprotobuf-lite -Wl,--no-undefined
+CXX_FLAGS += -fPIC -std=c++14
+LD_FLAGS += -shared -lprotobuf-lite -ldl -Wl,--no-undefined
 LIBRARY_NAME=libsteam_api.so
 RM = rm -f
 

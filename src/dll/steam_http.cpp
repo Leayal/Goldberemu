@@ -39,9 +39,32 @@ Steam_Http_Request *Steam_HTTP::get_request(HTTPRequestHandle hRequest)
 HTTPRequestHandle Steam_HTTP::CreateHTTPRequest( EHTTPMethod eHTTPRequestMethod, const char *pchAbsoluteURL )
 {
     PRINT_DEBUG("CreateHTTPRequest %i %s\n", eHTTPRequestMethod, pchAbsoluteURL);
+    if (!pchAbsoluteURL) return INVALID_HTTPREQUEST_HANDLE;
+    std::string url = pchAbsoluteURL;
+    unsigned url_index = 0;
+    if (url.rfind("https://", 0) == 0) {
+        url_index = sizeof("https://") - 1;
+    } else if (url.rfind("http://", 0) == 0) {
+        url_index = sizeof("http://") - 1;
+    }
+
+    struct Steam_Http_Request request;
+    if (url_index) {
+        if (url[url.size() - 1] == '/') url += "index.html";
+        std::string file_path = Local_Storage::get_game_settings_path() + "http/" + url.substr(url_index);
+        unsigned long long file_size = file_size_(file_path);
+        if (file_size) {
+            request.response.resize(file_size);
+            long long read = Local_Storage::get_file_data(file_path, (char *)request.response.data(), file_size, 0);
+            if (read < 0) read = 0;
+            if (read != file_size) request.response.resize(read);
+        }
+    }
+
+    std::lock_guard<std::recursive_mutex> lock(global_mutex);
     static HTTPRequestHandle h;
     ++h;
-    struct Steam_Http_Request request;
+
     request.handle = h;
     request.context_value = 0;
 
@@ -84,7 +107,7 @@ bool Steam_HTTP::SetHTTPRequestNetworkActivityTimeout( HTTPRequestHandle hReques
 // return false if the handle is invalid or the request is already sent.
 bool Steam_HTTP::SetHTTPRequestHeaderValue( HTTPRequestHandle hRequest, const char *pchHeaderName, const char *pchHeaderValue )
 {
-    PRINT_DEBUG("SetHTTPRequestHeaderValue\n");
+    PRINT_DEBUG("SetHTTPRequestHeaderValue %s %s\n", pchHeaderName, pchHeaderValue);
     Steam_Http_Request *request = get_request(hRequest);
     if (!request) {
         return false;
@@ -116,18 +139,24 @@ bool Steam_HTTP::SetHTTPRequestGetOrPostParameter( HTTPRequestHandle hRequest, c
 // header and only do a local cache lookup rather than sending any actual remote request.
 bool Steam_HTTP::SendHTTPRequest( HTTPRequestHandle hRequest, SteamAPICall_t *pCallHandle )
 {
-    PRINT_DEBUG("SendHTTPRequest\n");
+    PRINT_DEBUG("SendHTTPRequest %u %p\n", hRequest, pCallHandle);
     Steam_Http_Request *request = get_request(hRequest);
     if (!request) {
         return false;
     }
 
-    struct HTTPRequestCompleted_t data;
+    struct HTTPRequestCompleted_t data = {};
     data.m_hRequest = request->handle;
     data.m_ulContextValue = request->context_value;
-    data.m_bRequestSuccessful = false;
-    data.m_eStatusCode = k_EHTTPStatusCode404NotFound;
-    data.m_unBodySize = request->response.size();
+    if (request->response.size() == 0) {
+        data.m_bRequestSuccessful = false;
+        data.m_eStatusCode = k_EHTTPStatusCode404NotFound;
+        data.m_unBodySize = request->response.size();
+    } else {
+        data.m_bRequestSuccessful = true;
+        data.m_eStatusCode = k_EHTTPStatusCode200OK;
+        data.m_unBodySize = request->response.size();
+    }
 
     if (pCallHandle) {
         *pCallHandle = callback_results->addCallResult(data.k_iCallback, &data, sizeof(data), 0.1);
@@ -245,12 +274,15 @@ bool Steam_HTTP::GetHTTPStreamingResponseBodyData( HTTPRequestHandle hRequest, u
 bool Steam_HTTP::ReleaseHTTPRequest( HTTPRequestHandle hRequest )
 {
     PRINT_DEBUG("ReleaseHTTPRequest\n");
+    std::lock_guard<std::recursive_mutex> lock(global_mutex);
 
     auto c = std::begin(requests);
     while (c != std::end(requests)) {
         if (c->handle == hRequest) {
             c = requests.erase(c);
             return true;
+        } else {
+            ++c;
         }
     }
 
@@ -273,8 +305,13 @@ bool Steam_HTTP::GetHTTPDownloadProgressPct( HTTPRequestHandle hRequest, float *
 // parameter will set the content-type header for the request so the server may know how to interpret the body.
 bool Steam_HTTP::SetHTTPRequestRawPostBody( HTTPRequestHandle hRequest, const char *pchContentType, uint8 *pubBody, uint32 unBodyLen )
 {
-    PRINT_DEBUG("SetHTTPRequestRawPostBody\n");
-    return false;
+    PRINT_DEBUG("SetHTTPRequestRawPostBody %s\n", pchContentType);
+    Steam_Http_Request *request = get_request(hRequest);
+    if (!request) {
+        return false;
+    }
+
+    return true;
 }
 
 
@@ -358,5 +395,11 @@ bool Steam_HTTP::SetHTTPRequestAbsoluteTimeoutMS( HTTPRequestHandle hRequest, ui
 bool Steam_HTTP::GetHTTPRequestWasTimedOut( HTTPRequestHandle hRequest, bool *pbWasTimedOut )
 {
     PRINT_DEBUG("GetHTTPRequestWasTimedOut\n");
-    return false;
+    Steam_Http_Request *request = get_request(hRequest);
+    if (!request) {
+        return false;
+    }
+
+    if (pbWasTimedOut) *pbWasTimedOut = false;
+    return true;
 }

@@ -17,24 +17,11 @@
 
 #include "network.h"
 
-#if defined(STEAM_WIN32)
-
-#define MSG_NOSIGNAL 0
-
-#else
-#include <fcntl.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <sys/types.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
-#include <linux/netdevice.h>
-#endif
-
 #define MAX_BROADCASTS 16
 static int number_broadcasts = -1;
 static IP_PORT broadcasts[MAX_BROADCASTS];
+static uint32_t lower_range_ips[MAX_BROADCASTS];
+static uint32_t upper_range_ips[MAX_BROADCASTS];
 
 #define BROADCAST_INTERVAL 5.0
 #define HEARTBEAT_TIMEOUT 20.0
@@ -42,7 +29,44 @@ static IP_PORT broadcasts[MAX_BROADCASTS];
 
 #if defined(STEAM_WIN32)
 
-#include <iphlpapi.h>
+//windows xp support
+static int
+inet_pton4(const char *src, uint32_t *dst)
+{
+	static const char digits[] = "0123456789";
+	int saw_digit, octets, ch;
+	u_char tmp[sizeof(uint32_t)], *tp;
+
+	saw_digit = 0;
+	octets = 0;
+	*(tp = tmp) = 0;
+	while ((ch = *src++) != '\0') {
+		const char *pch;
+
+		if ((pch = strchr(digits, ch)) != NULL) {
+			size_t nx = *tp * 10 + (pch - digits);
+
+			if (nx > 255)
+				return (0);
+			*tp = (u_char) nx;
+			if (! saw_digit) {
+				if (++octets > 4)
+					return (0);
+				saw_digit = 1;
+			}
+		} else if (ch == '.' && saw_digit) {
+			if (octets == 4)
+				return (0);
+			*++tp = 0;
+			saw_digit = 0;
+		} else
+			return (0);
+	}
+	if (octets < 4)
+		return (0);
+	memcpy(dst, tmp, sizeof(uint32_t));
+	return (1);
+}
 
 static void get_broadcast_info(uint16 port)
 {
@@ -70,17 +94,16 @@ static void get_broadcast_info(uint16 port)
         IP_ADAPTER_INFO *pAdapter = pAdapterInfo;
 
         while (pAdapter) {
-            unsigned long gateway = 0, subnet_mask = 0;
+            uint32_t iface_ip = 0, subnet_mask = 0;
 
-            
-            if (inet_pton(AF_INET, pAdapter->IpAddressList.IpMask.String, &subnet_mask) == 1
-                    && inet_pton(AF_INET, pAdapter->GatewayList.IpAddress.String, &gateway) == 1) {
+            if (inet_pton4(pAdapter->IpAddressList.IpMask.String, &subnet_mask) == 1
+                    && inet_pton4(pAdapter->IpAddressList.IpAddress.String, &iface_ip) == 1) {
                     IP_PORT *ip_port = &broadcasts[number_broadcasts];
-                    //ip_port->ip.family = AF_INET;
-                    uint32 gateway_ip = ntohl(gateway), subnet_ip = ntohl(subnet_mask);
-                    uint32 broadcast_ip = gateway_ip + ~subnet_ip - 1;
-                    ip_port->ip = htonl(broadcast_ip);
+                    uint32 broadcast_ip = iface_ip | ~subnet_mask;
+                    ip_port->ip = broadcast_ip;
                     ip_port->port = port;
+                    lower_range_ips[number_broadcasts] = iface_ip & subnet_mask;
+                    upper_range_ips[number_broadcasts] = broadcast_ip;
                     number_broadcasts++;
 
                     if (number_broadcasts >= MAX_BROADCASTS) {
@@ -221,6 +244,11 @@ static void run_at_startup()
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != NO_ERROR)
         return;
+
+    for (int i = 0; i < 10; ++i) {
+        //hack: the game Full Mojo Rampage calls WSACleanup on startup so we call WSAStartup a few times so it doesn't get deallocated.
+        WSAStartup(MAKEWORD(2, 2), &wsaData);
+    }
 #else
 
 #endif
@@ -280,12 +308,13 @@ static int receive_packet(sock_t sock, IP_PORT *ip_port, char *data, unsigned lo
     return -1;
 }
 
-static bool send_broadcasts(sock_t sock, uint16 port, char *data, unsigned long length)
+static bool send_broadcasts(sock_t sock, uint16 port, char *data, unsigned long length, std::vector<IP_PORT> *custom_broadcasts)
 {
     static std::chrono::high_resolution_clock::time_point last_get_broadcast_info;
     if (number_broadcasts < 0 || check_timedout(last_get_broadcast_info, 60.0)) {
         PRINT_DEBUG("get_broadcast_info\n");
         get_broadcast_info(port);
+        set_adapter_ips(lower_range_ips, upper_range_ips, number_broadcasts);
         last_get_broadcast_info = std::chrono::high_resolution_clock::now();
     }
 
@@ -301,6 +330,19 @@ static bool send_broadcasts(sock_t sock, uint16 port, char *data, unsigned long 
         ret = send_packet_to(sock, broadcasts[i], data, length);
         IP_PORT ip_port = broadcasts[i];
     }
+
+    /** 
+     * Custom targeted clients server broadcaster
+     * 
+     * Sends to custom IPs the broadcast packet
+     * This is useful in cases of undetected network interfaces
+     */
+    PRINT_DEBUG("start custom broadcasts\n");
+    for(auto &addr : *custom_broadcasts) {
+        send_packet_to(sock, addr, data, length);
+    }
+
+    PRINT_DEBUG("end custom broadcasts\n");
 
     return true;
 }
@@ -362,7 +404,10 @@ unsigned int receive_buffer_amount(sock_t sock)
 
 static void send_tcp_pending(struct TCP_Socket &socket)
 {
-    int len = send(socket.sock, &(socket.send_buffer[0]), socket.send_buffer.size(), MSG_NOSIGNAL);
+    size_t buf_size = socket.send_buffer.size();
+    if (buf_size == 0) return;
+
+    int len = send(socket.sock, &(socket.send_buffer[0]), buf_size, MSG_NOSIGNAL);
     if (len <= 0) return;
 
     socket.send_buffer.erase(socket.send_buffer.begin(), socket.send_buffer.begin() + len);
@@ -423,18 +468,6 @@ static bool recv_tcp(struct TCP_Socket &socket)
     return false;
 }
 
-bool check_timedout(std::chrono::high_resolution_clock::time_point old, double timeout)
-{
-    if (timeout == 0.0) return true;
-
-    std::chrono::high_resolution_clock::time_point now = std::chrono::high_resolution_clock::now();
-    if (std::chrono::duration_cast<std::chrono::duration<double>>(now - old).count() > timeout) {
-        return true;
-    }
-
-    return false;
-}
-
 static void socket_timeouts(struct TCP_Socket &socket, double extra_time)
 {
     if (check_timedout(socket.last_heartbeat_sent, HEARTBEAT_TIMEOUT / 2.0)) {
@@ -449,6 +482,38 @@ static void socket_timeouts(struct TCP_Socket &socket, double extra_time)
         kill_tcp_socket(socket);
         PRINT_DEBUG("TCP SOCKET HEARTBEAT TIMEOUT\n");
     }
+}
+
+std::set<IP_PORT> Networking::resolve_ip(std::string dns)
+{
+    run_at_startup();
+    std::set<IP_PORT> ips;
+    struct addrinfo* result = NULL;
+
+    uint16 port = 0;
+
+    auto port_sindex = dns.find(":", 0);
+    if (port_sindex != std::string::npos) {
+        port = (uint16)atoi(dns.substr(port_sindex + 1).c_str());
+        dns = dns.substr(0, port_sindex);
+    }
+
+    if (getaddrinfo(dns.c_str(), NULL, NULL, &result) == 0) {
+        for (struct addrinfo *res = result; res != NULL; res = res->ai_next) {
+            PRINT_DEBUG("%u %u\n", res->ai_addrlen, res->ai_family);
+            if (res->ai_family == AF_INET) {
+                struct sockaddr_in *ipv4 = (struct sockaddr_in *)res->ai_addr;
+                uint32 ip;
+                memcpy(&ip, &ipv4->sin_addr, sizeof(ip));
+                IP_PORT addr;
+                addr.ip = ntohl(ip);
+                addr.port = port;
+                ips.insert(addr);
+            }
+        }
+    }
+
+    return ips;
 }
 
 void Networking::do_callbacks_message(Common_Message *msg)
@@ -491,6 +556,16 @@ void Networking::do_callbacks_message(Common_Message *msg)
     if (msg->has_networking_sockets()) {
         PRINT_DEBUG("has_networking_sockets\n");
         run_callbacks(CALLBACK_ID_NETWORKING_SOCKETS, msg);
+    }
+
+    if (msg->has_steam_messages()) {
+        PRINT_DEBUG("has_steam_messages\n");
+        run_callbacks(CALLBACK_ID_STEAM_MESSAGES, msg);
+    }
+
+    if (msg->has_networking_messages()) {
+        PRINT_DEBUG("has_networking_messages\n");
+        run_callbacks(CALLBACK_ID_NETWORKING_MESSAGES, msg);
     }
 }
 
@@ -666,15 +741,30 @@ bool Networking::handle_low_level_udp(Common_Message *msg, IP_PORT ip_port)
 
 #define NUM_TCP_WAITING 128
 
-Networking::Networking(CSteamID id, uint32 appid, uint16 port)
+Networking::Networking(CSteamID id, uint32 appid, uint16 port, std::set<IP_PORT> *custom_broadcasts, bool disable_sockets)
 {
-    run_at_startup();
     tcp_port = udp_port = port;
     own_ip = 0x7F000001;
     alive = true;
     last_run = std::chrono::high_resolution_clock::now();
     this->appid = appid;
 
+    if (disable_sockets) {
+        enabled = false;
+        udp_socket = -1;
+        tcp_socket = -1;
+        return;
+    }
+
+    if (custom_broadcasts) {
+        std::transform(custom_broadcasts->begin(), custom_broadcasts->end(), std::back_inserter(this->custom_broadcasts), [](IP_PORT addr) {addr.ip = htonl(addr.ip); addr.port = htons(addr.port); return addr; });
+        for (auto& addr : this->custom_broadcasts) {
+            if (addr.port == htons(0))
+                addr.port = htons(port);
+        }
+    }
+
+    run_at_startup();
     sock_t sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     PRINT_DEBUG("UDP socket: %u\n", sock);
     if (is_socket_valid(sock) && set_socket_nonblocking(sock)) {
@@ -783,9 +873,9 @@ void Networking::send_announce_broadcasts()
     size_t size = msg.ByteSizeLong(); 
     char *buffer = new char[size];
     msg.SerializeToArray(buffer, size);
-    send_broadcasts(udp_socket, htons(DEFAULT_PORT), buffer, size);
+    send_broadcasts(udp_socket, htons(DEFAULT_PORT), buffer, size, &this->custom_broadcasts);
     if (udp_port != DEFAULT_PORT) {
-        send_broadcasts(udp_socket, htons(udp_port), buffer, size);
+        send_broadcasts(udp_socket, htons(udp_port), buffer, size, &this->custom_broadcasts);
     }
 
     delete[] buffer;
@@ -1011,6 +1101,7 @@ void Networking::Run()
 
 void Networking::addListenId(CSteamID id)
 {
+    if (!enabled) return;
     auto i = std::find(ids.begin(), ids.end(), id);
     if (i != ids.end()) {
         return;
@@ -1042,8 +1133,20 @@ bool Networking::sendToIPPort(Common_Message *msg, uint32 ip, uint16 port, bool 
     return true;
 }
 
+uint32 Networking::getIP(CSteamID id)
+{
+    Connection *conn = find_connection(id, this->appid);
+    if (conn) {
+        return ntohl(conn->tcp_ip_port.ip);
+    }
+
+    return 0;
+}
+
 bool Networking::sendTo(Common_Message *msg, bool reliable, Connection *conn)
 {
+    if (!enabled) return false;
+
     bool ret = false;
     CSteamID dest_id((uint64)msg->dest_id());
     if (std::find(ids.begin(), ids.end(), dest_id) != ids.end()) {

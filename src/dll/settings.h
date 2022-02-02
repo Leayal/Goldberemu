@@ -87,9 +87,8 @@ public:
 #else
     static const bool is_lobby_connect = false;
 #endif
-    static std::wstring sanitizeW(std::wstring name);
-    static std::string sanitizeA(std::string name);
-    Settings(CSteamID steam_id, CGameID game_id, std::wstring name, std::string language, bool offline);
+    static std::string sanitize(std::string name);
+    Settings(CSteamID steam_id, CGameID game_id, std::string name, std::string language, bool offline);
     CSteamID get_local_steam_id();
     CGameID get_local_game_id();
     const char *get_local_name();
@@ -150,6 +149,12 @@ public:
 
     //overlay
     bool disable_overlay = false;
+
+    //app build id
+    int build_id = 10;
+
+    //make lobby creation fail in the matchmaking interface
+    bool disable_lobby_creation = false;
 };
 
 #endif

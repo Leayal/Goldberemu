@@ -16,29 +16,13 @@
    <http://www.gnu.org/licenses/>.  */
 
 #include "settings.h"
-#include <locale>
 
 
-std::wstring Settings::sanitizeW(std::wstring name)
+std::string Settings::sanitize(std::string name)
 {
     name.erase(std::remove(name.begin(), name.end(), '\n'), name.end());
     name.erase(std::remove(name.begin(), name.end(), '\r'), name.end());
-    std::locale loc2("en_US.UTF-8");
-    
-    for (auto& i : name)
-    {
-        if (!std::isprint(i, loc2))
-            i = ' ';
-    }
 
-    return name;
-}
-
-std::string Settings::sanitizeA(std::string name)
-{
-    name.erase(std::remove(name.begin(), name.end(), '\n'), name.end());
-    name.erase(std::remove(name.begin(), name.end(), '\r'), name.end());
-    
     for (auto& i : name)
     {
         if (!isprint(i))
@@ -48,22 +32,39 @@ std::string Settings::sanitizeA(std::string name)
     return name;
 }
 
-Settings::Settings(CSteamID steam_id, CGameID game_id, std::wstring name, std::string language, bool offline)
+Settings::Settings(CSteamID steam_id, CGameID game_id, std::string name, std::string language, bool offline)
 {
     this->steam_id = steam_id;
     this->game_id = game_id;
-    std::wstring _saniName = sanitizeW(name);
-    if (_saniName.size() == 0) {
-        _saniName = L" ";
+    if (name.size() == 0) {
+        this->name = "  ";
+    } else {
+        name.erase(std::remove(name.begin(), name.end(), '\n'), name.end());
+        name.erase(std::remove(name.begin(), name.end(), '\r'), name.end());
+
+        // There are case where player use non-latin characters.
+        // Russian, Thai, Chinese, Vietnamese, etc...
+        auto s = utf8_decode(name);
+        bool b = false;
+        for (auto& i : s)
+        {
+            if (!iswprint(i)) {
+                b = true;
+                i = ' ';
+            }
+        }
+        if (b) {
+            this->name = utf8_encode(s);
+        } else {
+            this->name = name;
+        }
     }
 
-    if (_saniName.size() == 1) {
-        _saniName = _saniName + L" ";
+    if (this->name.size() == 1) {
+        this->name = this->name + " ";
     }
 
-    this->name = utf8_encode(_saniName);
-
-    auto lang = sanitizeA(language);
+    auto lang = sanitize(language);
     std::transform(lang.begin(), lang.end(), lang.begin(), ::tolower);
     lang.erase(std::remove(lang.begin(), lang.end(), ' '), lang.end());
     this->language = lang;
